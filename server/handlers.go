@@ -10,10 +10,12 @@ import (
 	"net/url"
 	"sync/atomic"
 
+	"text/template"
+
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 
-	"github.com/yudai/gotty/webtty"
+	"github.com/kerrigell/gotty/webtty"
 )
 
 func (server *Server) generateHandleWS(ctx context.Context, cancel context.CancelFunc, counter *counter) http.HandlerFunc {
@@ -115,6 +117,27 @@ func (server *Server) processWSConn(ctx context.Context, conn *websocket.Conn) e
 		return errors.Wrapf(err, "failed to parse arguments")
 	}
 	params := query.Query()
+
+	// 增加配置文件中 cmd_params 渲染，做为命令行参数，解决复杂参数配置
+	values := make(map[string]string)
+	for k, v := range params {
+		if k != "arg" && len(v) == 1 {
+			values[k] = v[0]
+		}
+	}
+
+	for idx_, tmpl := range server.options.CommandArgsTemplate {
+		t, err := template.New(fmt.Sprintf("%s_%d", "params", idx_)).Parse(tmpl)
+		if err != nil {
+			return errors.Wrapf(err, "failed to parse params template", tmpl)
+		}
+		buf := bytes.NewBufferString("")
+		if err := t.Execute(buf, values); err != nil {
+			return errors.Wrapf(err, "failed to parse params template", tmpl)
+		}
+		params.Add("arg", buf.String())
+	}
+
 	var slave Slave
 	slave, err = server.factory.New(params)
 	if err != nil {
